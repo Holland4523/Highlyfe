@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Highlyfe Collective</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            font-family: 'Arial', sans-serif;
+        }
+
+        /* Header */
+        .header {
+            position: absolute;
+            top: 5%;
+            width: 100%;
+            text-align: center;
+            font-size: 80px;
+            font-weight: bold;
+            text-transform: uppercase;
+            color: white;
+            z-index: 2;
+        }
+
+        /* Buttons Section */
+        .center-box {
+            position: absolute;
+            bottom: 15%;
+            width: 100%;
+            text-align: center;
+            z-index: 2;
+        }
+
+        .center-box .button {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            border: 2px solid white;
+            border-radius: 5px;
+            background: transparent;
+            color: white;
+            text-transform: uppercase;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s, background-color 0.2s;
+        }
+
+        .center-box .button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 20px rgba(255, 255, 255, 0.8);
+            background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 1;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <div class="header">Highlyfe Collective</div>
+
+    <!-- Button Section -->
+    <div class="center-box">
+        <button class="button" onclick="window.location.href='https://calendly.com/highlyfecollective'">Book Here</button>
+        <button class="button" onclick="toggleModal()">Contact</button>
+    </div>
+
+    <!-- Party Canvas -->
+    <canvas id="partyCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById("partyCanvas");
+        const ctx = canvas.getContext("2d");
+
+        // Resize canvas to fill the screen
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        const balloons = [];
+        const confetti = [];
+
+        const createGradient = (x, y, radius, colors) => {
+            const gradient = ctx.createRadialGradient(x, y, radius * 0.3, x, y, radius);
+            colors.forEach((color, i) => gradient.addColorStop(i / (colors.length - 1), color));
+            return gradient;
+        };
+
+        // Create Balloons
+        for (let i = 0; i < 4; i++) {
+            balloons.push({
+                x: Math.random() * canvas.width,
+                y: canvas.height + Math.random() * 200,
+                radius: 40,
+                color: createGradient(0, 0, 40, ["#ff6666", "#ff3333", "#ff0000"]),
+                speed: Math.random() * 1 + 0.5,
+            });
+        }
+
+        // Create Confetti
+        for (let i = 0; i < 50; i++) {
+            confetti.push({
+                x: Math.random() * canvas.width,
+                y: Math.random() * canvas.height,
+                width: Math.random() * 10 + 5,
+                height: Math.random() * 10 + 5,
+                color: `hsl(${Math.random() * 360}, 100%, 50%)`,
+                angle: Math.random() * 360,
+                speedY: Math.random() * 2 + 1,
+                speedX: Math.random() * 2 - 1,
+            });
+        }
+
+        // Draw Balloons
+        const drawBalloon = (balloon) => {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(balloon.x, balloon.y, balloon.radius, 0, Math.PI * 2);
+            ctx.fillStyle = balloon.color;
+            ctx.fill();
+
+            // Add string
+            ctx.moveTo(balloon.x, balloon.y + balloon.radius);
+            ctx.lineTo(balloon.x, balloon.y + balloon.radius + 50);
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            ctx.restore();
+        };
+
+        // Draw Confetti
+        const drawConfetti = (piece) => {
+            ctx.save();
+            ctx.translate(piece.x, piece.y);
+            ctx.rotate((piece.angle * Math.PI) / 180);
+            ctx.fillStyle = piece.color;
+            ctx.fillRect(-piece.width / 2, -piece.height / 2, piece.width, piece.height);
+            ctx.restore();
+        };
+
+        // Animation Loop
+        const animate = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Update and draw balloons
+            balloons.forEach((balloon) => {
+                balloon.y -= balloon.speed;
+                if (balloon.y + balloon.radius < 0) {
+                    balloon.y = canvas.height + 100; // Reset balloon to bottom
+                    balloon.x = Math.random() * canvas.width;
+                }
+                drawBalloon(balloon);
+            });
+
+            // Update and draw confetti
+            confetti.forEach((piece) => {
+                piece.x += piece.speedX;
+                piece.y += piece.speedY;
+                if (piece.y > canvas.height) {
+                    piece.y = -piece.height; // Reset confetti to top
+                    piece.x = Math.random() * canvas.width;
+                }
+                drawConfetti(piece);
+            });
+
+            requestAnimationFrame(animate);
+        };
+
+        animate();
+
+        // Adjust canvas size on window resize
+        window.addEventListener("resize", () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+    </script>
+</body>
+</html>
