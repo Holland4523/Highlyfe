@@ -65,6 +65,52 @@
             height: 100%;
             z-index: 1;
         }
+
+        #overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+        }
+
+        #contactModal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #222;
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            z-index: 1001;
+            max-width: 600px;
+            width: 90%;
+            box-shadow: 0 0 15px rgba(255, 255, 255, 0.3);
+        }
+
+        #contactModal h2 {
+            margin-top: 0;
+        }
+
+        #contactModal p {
+            margin: 10px 0;
+        }
+
+        #contactModal button {
+            margin-top: 10px;
+            padding: 10px 20px;
+            border: none;
+            background: white;
+            color: black;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -75,6 +121,34 @@
     <div class="center-box">
         <button class="button" onclick="window.location.href='https://calendly.com/highlyfecollective'">Book Here</button>
         <button class="button" onclick="toggleModal()">Contact</button>
+    </div>
+
+    <!-- Contact Modal -->
+    <div id="overlay"></div>
+    <div id="contactModal">
+        <h2>Contact Highlyfe Members</h2>
+        <p><strong>Eric</strong><br>
+        Tracks: SoundCloud<br>
+        Role: Book a Time<br>
+        Email: Eskomgmt@gmail.com<br>
+        Instagram: @esko_7777</p>
+        <p><strong>Zames</strong><br>
+        Role: Artist<br>
+        Tracks: Song 1, Song 2<br>
+        Location: Studio G<br>
+        Email: StudioGofficial@gmail.com<br>
+        Instagram: @StudioGofficial</p>
+        <p><strong>612 Entertainment</strong><br>
+        Role: Artist<br>
+        Tracks: Song 1, Song 2<br>
+        Location: Studio G<br>
+        Email: StudioGofficial@gmail.com<br>
+        Instagram: @StudioGofficial</p>
+        <p><strong>Artist</strong><br>
+        Role: Artist<br>
+        Tracks: Song 1, Song 2<br>
+        Location: Studio G</p>
+        <button onclick="toggleModal()">Close</button>
     </div>
 
     <!-- Party Canvas -->
@@ -184,6 +258,15 @@
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
         });
+
+        // Toggle Contact Modal
+        function toggleModal() {
+            const modal = document.getElementById('contactModal');
+            const overlay = document.getElementById('overlay');
+            const isVisible = modal.style.display === 'block';
+            modal.style.display = isVisible ? 'none' : 'block';
+            overlay.style.display = isVisible ? 'none' : 'block';
+        }
     </script>
 </body>
 </html>
