@@ -1,15 +1,28 @@
 import { create } from 'zustand'
 
-export interface VideoFile {
+export type MusicStyle =
+  | 'double-discount'
+  | 'urgent-promo'
+  | 'countdown-sale'
+  | 'hype-offer'
+  | 'fast-ecommerce'
+  | 'energetic-cta'
+
+export interface MusicTrack {
   id: string
-  file: File
   name: string
   url: string
-  status: 'pending' | 'processing' | 'completed' | 'error'
-  progress: number
-  processedUrl: string | null
-  processedBlob: Blob | null
-  error?: string
+  duration: number
+  style: MusicStyle[]
+}
+
+export interface MusicConfig {
+  enabled: boolean
+  style: MusicStyle | 'random' | null
+  volume: number
+  fadeIn: number
+  fadeOut: number
+  selectedTrackId?: string
 }
 
 export interface OverlayConfig {
@@ -24,16 +37,34 @@ export interface OverlayConfig {
   duration?: number
 }
 
+export interface VideoFile {
+  id: string
+  file: File
+  name: string
+  url: string
+  status: 'pending' | 'processing' | 'completed' | 'error'
+  progress: number
+  processedUrl: string | null
+  processedBlob: Blob | null
+  blobUrl?: string
+  error?: string
+  overlayConfig?: OverlayConfig
+  assignedTrack?: MusicTrack
+}
+
 interface VideoStore {
   videos: VideoFile[]
   overlayConfig: OverlayConfig
+  musicConfig: MusicConfig
   isProcessing: boolean
   addVideos: (files: FileList | File[]) => void
   removeVideo: (id: string) => void
   clearVideos: () => void
   setOverlayConfig: (config: Partial<OverlayConfig>) => void
+  setMusicConfig: (config: Partial<MusicConfig>) => void
   setVideoStatus: (id: string, status: VideoFile['status'], progress?: number) => void
-  setVideoProcessed: (id: string, url: string, blob: Blob) => void
+  setVideoProcessed: (id: string, url: string, blob: Blob, blobUrl?: string) => void
+  setVideoBlobUrl: (id: string, blobUrl: string) => void
   setVideoError: (id: string, error: string) => void
   setIsProcessing: (value: boolean) => void
   resetProcessing: () => void
@@ -53,8 +84,14 @@ export const useVideoStore = create<VideoStore>((set) => ({
     line2_text_color: '#000000',
     text: '',
   },
+  musicConfig: {
+    enabled: true,
+    style: 'random',
+    volume: 0.8,
+    fadeIn: 0,
+    fadeOut: 0,
+  },
   isProcessing: false,
-
   addVideos: (files) => {
     const fileArray = Array.from(files)
     const videoFiles: VideoFile[] = []
@@ -77,7 +114,6 @@ export const useVideoStore = create<VideoStore>((set) => ({
 
     set((state) => ({ videos: [...state.videos, ...videoFiles] }))
   },
-
   removeVideo: (id) => {
     set((state) => {
       const video = state.videos.find((v) => v.id === id)
@@ -88,7 +124,6 @@ export const useVideoStore = create<VideoStore>((set) => ({
       return { videos: state.videos.filter((v) => v.id !== id) }
     })
   },
-
   clearVideos: () => {
     set((state) => {
       state.videos.forEach((v) => {
@@ -98,33 +133,35 @@ export const useVideoStore = create<VideoStore>((set) => ({
       return { videos: [] }
     })
   },
-
   setOverlayConfig: (config) => {
     set((state) => ({ overlayConfig: { ...state.overlayConfig, ...config } }))
   },
-
+  setMusicConfig: (config) => {
+    set((state) => ({ musicConfig: { ...state.musicConfig, ...config } }))
+  },
   setVideoStatus: (id, status, progress = 0) => {
     set((state) => ({
       videos: state.videos.map((v) => (v.id === id ? { ...v, status, progress } : v)),
     }))
   },
-
-  setVideoProcessed: (id, url, blob) => {
+  setVideoProcessed: (id, url, blob, blobUrl) => {
     set((state) => ({
       videos: state.videos.map((v) =>
-        v.id === id ? { ...v, status: 'completed', progress: 100, processedUrl: url, processedBlob: blob } : v
+        v.id === id
+          ? { ...v, status: 'completed', progress: 100, processedUrl: url, processedBlob: blob, blobUrl }
+          : v
       ),
     }))
   },
-
+  setVideoBlobUrl: (id, blobUrl) => {
+    set((state) => ({ videos: state.videos.map((v) => (v.id === id ? { ...v, blobUrl } : v)) }))
+  },
   setVideoError: (id, error) => {
     set((state) => ({
       videos: state.videos.map((v) => (v.id === id ? { ...v, status: 'error', error } : v)),
     }))
   },
-
   setIsProcessing: (value) => set({ isProcessing: value }),
-
   resetProcessing: () => {
     set((state) => ({
       videos: state.videos.map((v) => ({
@@ -133,6 +170,7 @@ export const useVideoStore = create<VideoStore>((set) => ({
         progress: 0,
         processedUrl: null,
         processedBlob: null,
+        blobUrl: undefined,
         error: undefined,
       })),
     }))
