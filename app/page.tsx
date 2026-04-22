@@ -1,8 +1,28 @@
 'use client'
 
-import { useRef, useState } from 'react'
-import { Upload, Video, X, Download, Play, CheckCircle2, AlertCircle, Loader2, ArrowLeft, Trash2 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  Download,
+  Loader2,
+  Play,
+  Trash2,
+  Upload,
+  Video,
+  X,
+} from 'lucide-react'
 import { useVideoStore, type OverlayConfig } from '@/lib/store'
+import {
+  canRecoverBatch,
+  clearBatchState,
+  createBatch,
+  getCompletedVideos,
+  loadBatchState,
+  saveBatchState,
+  type BatchState,
+} from '@/lib/batch-manager'
 
 const PRESETS: { id: string; name: string; config: Partial<OverlayConfig> }[] = [
   {
@@ -42,14 +62,6 @@ const PRESETS: { id: string; name: string; config: Partial<OverlayConfig> }[] = 
       line2_text: 'ENDS TODAY',
       line2_bg_color: '#FFFFFF',
       line2_text_color: '#000000',
-    },
-  },
-  {
-    id: 'fulltext-waited',
-    name: 'You Waited',
-    config: {
-      style: 'fulltext',
-      text: 'If you waited until today you absolutely won because this is dirt cheap rn with free shipping',
     },
   },
 ]
@@ -101,47 +113,6 @@ function drawBannerOverlay(ctx: CanvasRenderingContext2D, width: number, height:
   }
 }
 
-function drawFulltextOverlay(ctx: CanvasRenderingContext2D, width: number, height: number, config: OverlayConfig) {
-  const text = config.text || 'Your text here'
-  const maxWidth = width * 0.85
-  const fontSize = Math.round(height * 0.042)
-  const lineHeight = fontSize * 1.25
-  const strokeWidth = Math.max(3, Math.round(fontSize / 10))
-
-  ctx.font = `900 ${fontSize}px "Arial Black", "Helvetica Neue", Arial, sans-serif`
-  ctx.textBaseline = 'middle'
-  ctx.textAlign = 'center'
-
-  const words = text.split(' ')
-  const lines: string[] = []
-  let currentLine = ''
-
-  for (const word of words) {
-    const testLine = currentLine ? `${currentLine} ${word}` : word
-    if (ctx.measureText(testLine).width <= maxWidth) {
-      currentLine = testLine
-    } else {
-      if (currentLine) lines.push(currentLine)
-      currentLine = word
-    }
-  }
-  if (currentLine) lines.push(currentLine)
-
-  const totalHeight = lines.length * lineHeight
-  const startY = height * 0.32 - totalHeight / 2 + lineHeight / 2
-
-  for (let i = 0; i < lines.length; i++) {
-    const y = startY + i * lineHeight
-    ctx.strokeStyle = '#000000'
-    ctx.lineWidth = strokeWidth
-    ctx.lineJoin = 'round'
-    ctx.lineCap = 'round'
-    ctx.strokeText(lines[i], width / 2, y)
-    ctx.fillStyle = '#FFFFFF'
-    ctx.fillText(lines[i], width / 2, y)
-  }
-}
-
 async function processVideoClient(file: File, config: OverlayConfig, onProgress: (progress: number) => void): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const video = document.createElement('video')
@@ -161,99 +132,45 @@ async function processVideoClient(file: File, config: OverlayConfig, onProgress:
       canvas.width = width
       canvas.height = height
       const ctx = canvas.getContext('2d')
-
       if (!ctx) {
         URL.revokeObjectURL(url)
         reject(new Error('Could not create canvas context'))
         return
       }
 
-      ctx.drawImage(video, 0, 0, width, height)
-      if (config.style === 'banner') {
-        drawBannerOverlay(ctx, width, height, config)
-      } else {
-        drawFulltextOverlay(ctx, width, height, config)
-      }
-
       const stream = canvas.captureStream(30)
-      const mimeCandidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm', 'video/mp4']
-      const mimeType = mimeCandidates.find((candidate) => {
-        try {
-          return typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(candidate)
-        } catch {
-          return false
-        }
-      }) || ''
-
-      let recorder: MediaRecorder
-      try {
-        recorder = mimeType
-          ? new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 8000000 })
-          : new MediaRecorder(stream)
-      } catch {
-        try {
-          recorder = new MediaRecorder(stream)
-        } catch {
-          URL.revokeObjectURL(url)
-          reject(new Error('This browser does not support video export for this file'))
-          return
-        }
-      }
-
+      const recorder = new MediaRecorder(stream)
       const chunks: Blob[] = []
+
       recorder.ondataavailable = (e) => {
         if (e.data.size > 0) chunks.push(e.data)
       }
-
       recorder.onstop = () => {
         URL.revokeObjectURL(url)
-        const finalMimeType = chunks[0]?.type || 'video/webm'
-        resolve(new Blob(chunks, { type: finalMimeType }))
+        resolve(new Blob(chunks, { type: chunks[0]?.type || 'video/webm' }))
       }
-
       recorder.onerror = () => {
         URL.revokeObjectURL(url)
         reject(new Error('Recording failed'))
       }
 
       let animationId = 0
-      let isRecording = true
-
       const renderLoop = () => {
-        if (!isRecording) return
         ctx.drawImage(video, 0, 0, width, height)
-        if (config.style === 'banner') {
-          drawBannerOverlay(ctx, width, height, config)
-        } else {
-          drawFulltextOverlay(ctx, width, height, config)
-        }
-        const progress = Math.min(99, Math.round((video.currentTime / duration) * 100))
-        onProgress(progress)
+        drawBannerOverlay(ctx, width, height, config)
+        onProgress(Math.min(99, Math.round((video.currentTime / duration) * 100)))
         animationId = requestAnimationFrame(renderLoop)
       }
 
       video.onended = () => {
-        isRecording = false
         cancelAnimationFrame(animationId)
         onProgress(100)
         recorder.stop()
       }
 
-      video.onerror = () => {
-        isRecording = false
-        cancelAnimationFrame(animationId)
-        URL.revokeObjectURL(url)
-        reject(new Error('Video playback error'))
-      }
-
       recorder.start(100)
       renderLoop()
-      video.play().catch((err) => {
-        isRecording = false
-        cancelAnimationFrame(animationId)
-        URL.revokeObjectURL(url)
-        reject(new Error('Could not play video: ' + err.message))
-      })
+      video.play().catch((err) => reject(new Error(`Could not play video: ${err.message}`)))
     }
 
     video.onerror = () => {
@@ -263,46 +180,30 @@ async function processVideoClient(file: File, config: OverlayConfig, onProgress:
   })
 }
 
-function OverlayPreview({ config, className = '' }: { config: OverlayConfig; className?: string }) {
-  if (config.style === 'banner') {
-    return (
-      <div className={`absolute inset-0 pointer-events-none ${className}`}>
-        <div className="absolute top-[15%] left-0 right-0 flex flex-col items-center gap-0.5">
-          <div className="px-4 py-1.5 rounded-xl text-sm font-bold" style={{ backgroundColor: config.line1_bg_color, color: config.line1_text_color }}>
-            {config.line1_text || 'Line 1'}
-          </div>
-          {config.line2_text && (
-            <div className="px-3 py-1 rounded-xl text-xs font-bold" style={{ backgroundColor: config.line2_bg_color, color: config.line2_text_color }}>
-              {config.line2_text}
-            </div>
-          )}
-        </div>
-      </div>
-    )
+async function uploadProcessedVideo(blob: Blob, filename: string): Promise<string> {
+  const response = await fetch('/api/upload-processed', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/octet-stream',
+      'X-Filename': encodeURIComponent(filename),
+    },
+    body: blob,
+  })
+
+  if (!response.ok) {
+    throw new Error('Failed to upload processed video')
   }
 
-  return (
-    <div className={`absolute inset-0 pointer-events-none ${className}`}>
-      <div className="absolute top-[25%] left-0 right-0 px-3">
-        <p
-          className="text-center text-sm font-black leading-tight"
-          style={{
-            color: '#FFFFFF',
-            textShadow: '2px 2px 0 #000, -2px -2px 0 #000, 2px -2px 0 #000, -2px 2px 0 #000, 0 2px 0 #000, 0 -2px 0 #000, 2px 0 0 #000, -2px 0 0 #000',
-            fontFamily: '"Arial Black", "Helvetica Neue", Arial, sans-serif',
-            lineHeight: '1.25',
-          }}
-        >
-          {config.text || 'Your text here'}
-        </p>
-      </div>
-    </div>
-  )
+  const data = (await response.json()) as { url: string }
+  return data.url
 }
 
 export default function Home() {
   const [step, setStep] = useState<'upload' | 'configure' | 'process' | 'done'>('upload')
-  const [selectedPreset, setSelectedPreset] = useState<string>('triple-discount')
+  const [selectedPreset, setSelectedPreset] = useState('triple-discount')
+  const [batchState, setBatchState] = useState<BatchState | null>(null)
+  const [recoveredBatch, setRecoveredBatch] = useState<BatchState | null>(null)
+  const [isDownloadingAll, setIsDownloadingAll] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const {
@@ -314,84 +215,132 @@ export default function Home() {
     setOverlayConfig,
     setVideoStatus,
     setVideoProcessed,
+    setVideoBlobUrl,
     setVideoError,
     setIsProcessing,
     resetProcessing,
   } = useVideoStore()
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      addVideos(e.target.files)
-      setStep('configure')
+  useEffect(() => {
+    if (canRecoverBatch()) {
+      setRecoveredBatch(loadBatchState())
     }
-    e.target.value = ''
-  }
+  }, [])
 
-  const handlePresetSelect = (presetId: string) => {
-    setSelectedPreset(presetId)
-    const preset = PRESETS.find((p) => p.id === presetId)
-    if (preset) setOverlayConfig(preset.config)
-  }
+  const completedCount = useMemo(() => videos.filter((v) => v.status === 'completed').length, [videos])
 
   const handleProcessAll = async () => {
     setStep('process')
     setIsProcessing(true)
 
-    for (const video of videos) {
+    const newBatch = createBatch(
+      videos.map((v) => v.name),
+      { overlayPreset: selectedPreset, musicEnabled: false }
+    )
+
+    setBatchState(newBatch)
+
+    for (let index = 0; index < videos.length; index++) {
+      const video = videos[index]
+      const batchVideo = newBatch.videos[index]
       setVideoStatus(video.id, 'processing', 0)
+
       try {
         const processedBlob = await processVideoClient(video.file, overlayConfig, (progress) => {
           setVideoStatus(video.id, 'processing', progress)
+          const current = loadBatchState()
+          if (current && current.id === newBatch.id) {
+            current.videos[index] = { ...current.videos[index], status: 'processing', progress }
+            saveBatchState(current)
+            setBatchState(current)
+          }
         })
+
         const processedUrl = URL.createObjectURL(processedBlob)
         setVideoProcessed(video.id, processedUrl, processedBlob)
+
+        const blobUrl = await uploadProcessedVideo(processedBlob, video.name)
+        setVideoBlobUrl(video.id, blobUrl)
+
+        const current = loadBatchState()
+        if (current && current.id === newBatch.id) {
+          current.videos[index] = {
+            ...current.videos[index],
+            status: 'completed',
+            progress: 100,
+            blobUrl,
+            localUrl: processedUrl,
+            processedAt: Date.now(),
+          }
+          saveBatchState(current)
+          setBatchState(current)
+        }
       } catch (error) {
-        setVideoError(video.id, error instanceof Error ? error.message : 'Processing failed')
+        const message = error instanceof Error ? error.message : 'Processing failed'
+        setVideoError(video.id, message)
+
+        const current = loadBatchState()
+        if (current && current.id === newBatch.id) {
+          current.videos[index] = {
+            ...current.videos[index],
+            status: 'error',
+            error: message,
+          }
+          saveBatchState(current)
+          setBatchState(current)
+        }
       }
     }
 
     setIsProcessing(false)
     setStep('done')
+    setRecoveredBatch(loadBatchState())
   }
 
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = filename
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-  }
+  const handleDownloadAll = async () => {
+    const sourceBatch = batchState ?? recoveredBatch ?? loadBatchState()
+    if (!sourceBatch) return
 
-  const handleDownload = (video: (typeof videos)[0]) => {
-    if (!video.processedBlob) return
-    const ext = video.processedBlob.type.includes('mp4') ? '.mp4' : '.webm'
-    const filename = `edited_${video.name.replace(/\.[^.]+$/, '')}${ext}`
-
-    if (navigator.share && navigator.canShare) {
-      const file = new File([video.processedBlob], filename, { type: video.processedBlob.type })
-      if (navigator.canShare({ files: [file] })) {
-        navigator.share({ files: [file] }).catch(() => downloadBlob(video.processedBlob!, filename))
-        return
-      }
+    const completed = getCompletedVideos(sourceBatch)
+    if (completed.length === 0) {
+      alert('No completed videos available in durable storage yet.')
+      return
     }
 
-    downloadBlob(video.processedBlob, filename)
+    setIsDownloadingAll(true)
+    try {
+      const response = await fetch('/api/download-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          videos: completed.map((video) => ({ name: video.name, url: video.blobUrl! })),
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to create ZIP')
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `vidbot_batch_${Date.now()}.zip`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Batch download failed')
+    } finally {
+      setIsDownloadingAll(false)
+    }
   }
 
-  const handleDownloadAll = () => {
-    videos.filter((v) => v.status === 'completed').forEach(handleDownload)
+  const handleClearRecovered = () => {
+    clearBatchState()
+    setRecoveredBatch(null)
   }
-
-  const handleNewBatch = () => {
-    clearVideos()
-    setStep('upload')
-  }
-
-  const completedCount = videos.filter((v) => v.status === 'completed').length
-  const errorCount = videos.filter((v) => v.status === 'error').length
 
   return (
     <main className="min-h-screen p-4 pb-24">
@@ -402,22 +351,16 @@ export default function Home() {
           </div>
           <span className="font-bold text-lg">VidBot</span>
         </div>
-        {videos.length > 0 && (
-          <span className="text-sm text-[var(--muted-foreground)]">{videos.length} video{videos.length !== 1 ? 's' : ''}</span>
-        )}
       </header>
 
       {step === 'upload' && (
         <div className="space-y-6">
           <div className="text-center space-y-2">
             <h1 className="text-2xl font-bold">Batch Edit Videos</h1>
-            <p className="text-[var(--muted-foreground)]">Add text overlays to multiple videos at once</p>
+            <p className="text-[var(--muted-foreground)]">Upload videos and export from durable storage</p>
           </div>
 
-          <div
-            onClick={() => fileInputRef.current?.click()}
-            className="border-2 border-dashed border-[var(--border)] rounded-2xl p-8 text-center cursor-pointer hover:border-[var(--primary)] transition-colors active:bg-[var(--card)]"
-          >
+          <div onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-[var(--border)] rounded-2xl p-8 text-center cursor-pointer">
             <Upload className="w-12 h-12 mx-auto mb-4 text-[var(--muted-foreground)]" />
             <p className="font-medium mb-1">Tap to select videos</p>
             <p className="text-sm text-[var(--muted-foreground)]">MP4, MOV, WebM supported</p>
@@ -427,33 +370,21 @@ export default function Home() {
 
       {step === 'configure' && (
         <div className="space-y-6">
-          <button onClick={() => setStep('upload')} className="flex items-center gap-2 text-[var(--muted-foreground)] hover:text-[var(--foreground)] min-h-[44px]">
-            <ArrowLeft className="w-4 h-4" />
-            Back
+          <button onClick={() => setStep('upload')} className="flex items-center gap-2 text-[var(--muted-foreground)]">
+            <ArrowLeft className="w-4 h-4" /> Back
           </button>
 
-          <div className="text-center space-y-2">
-            <h1 className="text-xl font-bold">Configure Overlay</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">Select a preset or customize your text</p>
-          </div>
-
-          <div className="relative aspect-[9/16] max-h-[300px] mx-auto bg-black rounded-xl overflow-hidden">
-            {videos[0] && (
-              <>
-                <video src={videos[0].url} className="w-full h-full object-cover" muted playsInline autoPlay loop />
-                <OverlayPreview config={overlayConfig} />
-              </>
-            )}
-          </div>
-
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-[var(--muted-foreground)]">Presets</h3>
+          <div className="space-y-2">
+            <h1 className="text-xl font-bold">Overlay Preset</h1>
             <div className="grid grid-cols-2 gap-2">
               {PRESETS.map((preset) => (
                 <button
                   key={preset.id}
-                  onClick={() => handlePresetSelect(preset.id)}
-                  className={`p-3 rounded-xl text-left text-sm font-medium transition-colors min-h-[44px] ${selectedPreset === preset.id ? 'bg-[var(--primary)] text-black' : 'bg-[var(--card)] hover:bg-[var(--muted)] active:bg-[var(--muted)]'}`}
+                  onClick={() => {
+                    setSelectedPreset(preset.id)
+                    setOverlayConfig(preset.config)
+                  }}
+                  className={`p-3 rounded-xl text-left text-sm font-medium ${selectedPreset === preset.id ? 'bg-[var(--primary)] text-black' : 'bg-[var(--card)]'}`}
                 >
                   {preset.name}
                 </button>
@@ -461,75 +392,45 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="space-y-3">
-            <h3 className="text-sm font-medium text-[var(--muted-foreground)]">Custom Text</h3>
-            {overlayConfig.style === 'banner' ? (
-              <div className="space-y-2">
-                <input type="text" value={overlayConfig.line1_text} onChange={(e) => setOverlayConfig({ line1_text: e.target.value })} placeholder="Line 1 text" className="w-full p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] text-base min-h-[44px]" />
-                <input type="text" value={overlayConfig.line2_text} onChange={(e) => setOverlayConfig({ line2_text: e.target.value })} placeholder="Line 2 text (optional)" className="w-full p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] text-base min-h-[44px]" />
-              </div>
-            ) : (
-              <textarea value={overlayConfig.text} onChange={(e) => setOverlayConfig({ text: e.target.value })} placeholder="Enter your fullscreen text..." rows={3} className="w-full p-3 rounded-xl bg-[var(--card)] border border-[var(--border)] text-base resize-none" />
-            )}
-          </div>
-
           <div className="space-y-2">
-            <h3 className="text-sm font-medium text-[var(--muted-foreground)]">Videos ({videos.length})</h3>
-            <div className="space-y-2 max-h-[200px] overflow-y-auto">
-              {videos.map((video) => (
-                <div key={video.id} className="flex items-center gap-3 p-2 rounded-xl bg-[var(--card)]">
-                  <div className="w-12 h-12 rounded-lg bg-black overflow-hidden flex-shrink-0">
-                    <video src={video.url} className="w-full h-full object-cover" muted playsInline />
-                  </div>
-                  <span className="flex-1 text-sm truncate">{video.name}</span>
-                  <button onClick={() => removeVideo(video.id)} className="p-2 text-[var(--muted-foreground)] hover:text-red-500 min-w-[44px] min-h-[44px] flex items-center justify-center">
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-              ))}
-            </div>
-            <button onClick={() => fileInputRef.current?.click()} className="w-full p-3 rounded-xl border border-dashed border-[var(--border)] text-sm text-[var(--muted-foreground)] hover:border-[var(--primary)] min-h-[44px]">
-              + Add more videos
-            </button>
+            {videos.map((video) => (
+              <div key={video.id} className="flex items-center gap-3 p-2 rounded-xl bg-[var(--card)]">
+                <span className="flex-1 text-sm truncate">{video.name}</span>
+                <button onClick={() => removeVideo(video.id)} className="p-2 text-[var(--muted-foreground)]">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ))}
           </div>
 
-          <button onClick={handleProcessAll} disabled={videos.length === 0} className="w-full p-4 rounded-xl bg-[var(--primary)] text-black font-bold text-lg disabled:opacity-50 min-h-[56px]">
+          <button onClick={handleProcessAll} disabled={videos.length === 0} className="w-full p-4 rounded-xl bg-[var(--primary)] text-black font-bold">
             Process {videos.length} Video{videos.length !== 1 ? 's' : ''}
           </button>
         </div>
       )}
 
       {step === 'process' && (
-        <div className="space-y-6">
+        <div className="space-y-4">
           <div className="text-center space-y-2">
-            <Loader2 className="w-12 h-12 mx-auto animate-spin text-[var(--primary)]" />
-            <h1 className="text-xl font-bold">Processing Videos</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">Keep this page open while processing...</p>
+            <Loader2 className="w-10 h-10 mx-auto animate-spin text-[var(--primary)]" />
+            <h1 className="text-xl font-bold">Processing + Uploading</h1>
           </div>
 
-          <div className="space-y-3">
-            {videos.map((video) => (
-              <div key={video.id} className="p-4 rounded-xl bg-[var(--card)] space-y-2">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-black overflow-hidden flex-shrink-0">
-                    <video src={video.url} className="w-full h-full object-cover" muted playsInline />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm truncate">{video.name}</p>
-                    <p className="text-xs text-[var(--muted-foreground)]">{video.status === 'processing' ? `${video.progress}%` : video.status === 'completed' ? 'Done' : video.status === 'error' ? video.error || 'Failed' : 'Waiting...'}</p>
-                  </div>
-                  {video.status === 'completed' && <CheckCircle2 className="w-5 h-5 text-[var(--primary)]" />}
-                  {video.status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
-                  {video.status === 'processing' && <Loader2 className="w-5 h-5 animate-spin text-[var(--primary)]" />}
+          {videos.map((video) => (
+            <div key={video.id} className="p-4 rounded-xl bg-[var(--card)] space-y-2">
+              <div className="flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm truncate">{video.name}</p>
+                  <p className="text-xs text-[var(--muted-foreground)]">
+                    {video.status === 'processing' ? `${video.progress}%` : video.status}
+                  </p>
                 </div>
-                {video.status === 'processing' && (
-                  <div className="h-1 bg-[var(--muted)] rounded-full overflow-hidden">
-                    <div className="h-full bg-[var(--primary)] transition-all duration-300" style={{ width: `${video.progress}%` }} />
-                  </div>
-                )}
+                {video.status === 'completed' && <CheckCircle2 className="w-5 h-5 text-[var(--primary)]" />}
+                {video.status === 'error' && <AlertCircle className="w-5 h-5 text-red-500" />}
+                {video.status === 'processing' && <Loader2 className="w-5 h-5 animate-spin text-[var(--primary)]" />}
               </div>
-            ))}
-          </div>
+            </div>
+          ))}
         </div>
       )}
 
@@ -538,47 +439,43 @@ export default function Home() {
           <div className="text-center space-y-2">
             <CheckCircle2 className="w-16 h-16 mx-auto text-[var(--primary)]" />
             <h1 className="text-xl font-bold">Processing Complete</h1>
-            <p className="text-sm text-[var(--muted-foreground)]">{completedCount} video{completedCount !== 1 ? 's' : ''} ready to download{errorCount > 0 && `, ${errorCount} failed`}</p>
-          </div>
-
-          <div className="space-y-3">
-            {videos.map((video) => (
-              <div key={video.id} className="p-4 rounded-xl bg-[var(--card)]">
-                <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-lg bg-black overflow-hidden flex-shrink-0 relative">
-                    <video src={video.processedUrl || video.url} className="w-full h-full object-cover" muted playsInline />
-                    {video.status === 'completed' && <div className="absolute inset-0 flex items-center justify-center bg-black/30"><Play className="w-5 h-5 text-white" /></div>}
-                    {video.status === 'error' && <div className="absolute inset-0 flex items-center justify-center bg-red-500/30"><AlertCircle className="w-5 h-5 text-white" /></div>}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm truncate">{video.name}</p>
-                    <p className="text-xs text-[var(--muted-foreground)]">{video.status === 'completed' ? 'Ready' : video.error || 'Failed'}</p>
-                  </div>
-                  {video.status === 'completed' && (
-                    <button onClick={() => handleDownload(video)} className="p-2 rounded-lg bg-[var(--primary)] text-black min-w-[44px] min-h-[44px] flex items-center justify-center">
-                      <Download className="w-5 h-5" />
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+            <p className="text-sm text-[var(--muted-foreground)]">{completedCount} video(s) uploaded to durable storage</p>
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => { resetProcessing(); setStep('configure') }} className="flex-1 p-4 rounded-xl bg-[var(--card)] font-medium min-h-[56px]">Edit Again</button>
-            <button onClick={handleNewBatch} className="flex-1 p-4 rounded-xl bg-[var(--card)] font-medium flex items-center justify-center gap-2 min-h-[56px]">
-              <Trash2 className="w-4 h-4" />
-              New Batch
+            <button onClick={() => { resetProcessing(); setStep('configure') }} className="flex-1 p-4 rounded-xl bg-[var(--card)] font-medium">Edit Again</button>
+            <button onClick={() => { clearVideos(); setStep('upload'); clearBatchState(); setBatchState(null) }} className="flex-1 p-4 rounded-xl bg-[var(--card)] font-medium flex items-center justify-center gap-2">
+              <Trash2 className="w-4 h-4" /> New Batch
             </button>
           </div>
 
-          {completedCount > 0 && (
-            <button onClick={handleDownloadAll} className="w-full p-4 rounded-xl bg-[var(--primary)] text-black font-bold min-h-[56px]">Download All ({completedCount})</button>
+          <button onClick={handleDownloadAll} disabled={isDownloadingAll} className="w-full p-4 rounded-xl bg-[var(--primary)] text-black font-bold flex items-center justify-center gap-2">
+            {isDownloadingAll ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+            {isDownloadingAll ? 'Building ZIP…' : `Download All (${completedCount})`}
+          </button>
+
+          {recoveredBatch && (
+            <button type="button" onClick={handleClearRecovered} className="w-full p-3 rounded-xl bg-[var(--card)] font-medium text-sm">
+              Start New Batch
+            </button>
           )}
         </div>
       )}
 
-      <input ref={fileInputRef} type="file" multiple accept="video/*" onChange={handleFileSelect} className="hidden" />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept="video/*"
+        onChange={(e) => {
+          if (e.target.files && e.target.files.length > 0) {
+            addVideos(e.target.files)
+            setStep('configure')
+          }
+          e.target.value = ''
+        }}
+        className="hidden"
+      />
     </main>
   )
 }
